@@ -1,3 +1,4 @@
+const crypto = require("crypto");
 const express = require("express");
 const fs = require("fs");
 const path = require("path");
@@ -8,6 +9,10 @@ loadLocalEnv();
 const app = express();
 const PORT = process.env.PORT || 3000;
 const REDIS_URL = process.env.REDIS_URL;
+const AUTH_PASSWORD = process.env.AUTH_PASSWORD || "";
+const SESSION_SECRET = process.env.SESSION_SECRET || "";
+const SESSION_MS = 30 * 24 * 60 * 60 * 1000;
+const COOKIE_NAME = "session";
 
 // Redis has no folders. This prefix is the isolated "folder" for this app.
 // Every read and write stays under it, so a shared Render Key Value store
@@ -16,9 +21,140 @@ const KEY_NAMESPACE = normalizeNamespace(process.env.REDIS_KEY_PREFIX || "agent-
 
 const DAY_INDEX_KEY = key("day-index");
 
+app.set("trust proxy", 1);
 app.use(express.json({ limit: "64kb" }));
 
 let redisClient = null;
+const loginAttempts = new Map();
+
+function passwordMatches(input) {
+  const given = crypto.createHash("sha256").update(String(input)).digest();
+  const expected = crypto.createHash("sha256").update(AUTH_PASSWORD).digest();
+  return crypto.timingSafeEqual(given, expected);
+}
+
+function signSession() {
+  const body = Buffer.from(
+    JSON.stringify({ exp: Date.now() + SESSION_MS })
+  ).toString("base64url");
+  const sig = crypto.createHmac("sha256", SESSION_SECRET).update(body).digest("base64url");
+  return `${body}.${sig}`;
+}
+
+function readSession(req) {
+  const raw = req.headers.cookie || "";
+  const part = raw
+    .split(";")
+    .map((item) => item.trim())
+    .find((item) => item.startsWith(`${COOKIE_NAME}=`));
+  if (!part) return null;
+  const token = decodeURIComponent(part.slice(COOKIE_NAME.length + 1));
+  const dot = token.indexOf(".");
+  if (dot === -1) return null;
+  const body = token.slice(0, dot);
+  const sig = token.slice(dot + 1);
+  const expected = crypto.createHmac("sha256", SESSION_SECRET).update(body).digest("base64url");
+  const sigBuf = Buffer.from(sig);
+  const expectedBuf = Buffer.from(expected);
+  if (sigBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(sigBuf, expectedBuf)) {
+    return null;
+  }
+  try {
+    const payload = JSON.parse(Buffer.from(body, "base64url").toString());
+    if (!payload || payload.exp < Date.now()) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+function setSessionCookie(res) {
+  const secure = process.env.NODE_ENV === "production" || Boolean(process.env.RENDER);
+  const parts = [
+    `${COOKIE_NAME}=${signSession()}`,
+    "HttpOnly",
+    "SameSite=Lax",
+    "Path=/",
+    `Max-Age=${Math.floor(SESSION_MS / 1000)}`,
+  ];
+  if (secure) parts.push("Secure");
+  res.setHeader("Set-Cookie", parts.join("; "));
+}
+
+function clearSessionCookie(res) {
+  const secure = process.env.NODE_ENV === "production" || Boolean(process.env.RENDER);
+  const parts = [`${COOKIE_NAME}=`, "HttpOnly", "SameSite=Lax", "Path=/", "Max-Age=0"];
+  if (secure) parts.push("Secure");
+  res.setHeader("Set-Cookie", parts.join("; "));
+}
+
+function clientIp(req) {
+  return req.ip || req.socket.remoteAddress || "unknown";
+}
+
+function tooManyAttempts(ip) {
+  const now = Date.now();
+  const recent = (loginAttempts.get(ip) || []).filter((at) => now - at < 15 * 60 * 1000);
+  loginAttempts.set(ip, recent);
+  return recent.length >= 8;
+}
+
+function requireAuth(req, res, next) {
+  if (!AUTH_PASSWORD || !SESSION_SECRET) {
+    return res.status(503).json({ error: "Login is not configured on the server." });
+  }
+  if (!readSession(req)) {
+    return res.status(401).json({ error: "Login required" });
+  }
+  next();
+}
+
+app.post("/api/login", (req, res) => {
+  if (!AUTH_PASSWORD || !SESSION_SECRET) {
+    return res.status(503).json({ error: "Login is not configured on the server." });
+  }
+  const ip = clientIp(req);
+  if (tooManyAttempts(ip)) {
+    return res.status(429).json({ error: "Too many attempts. Try again in 15 minutes." });
+  }
+  const password = req.body && req.body.password;
+  if (typeof password !== "string" || !passwordMatches(password)) {
+    const recent = loginAttempts.get(ip) || [];
+    recent.push(Date.now());
+    loginAttempts.set(ip, recent);
+    return res.status(401).json({ error: "Wrong password" });
+  }
+  loginAttempts.delete(ip);
+  setSessionCookie(res);
+  res.json({ ok: true });
+});
+
+app.post("/api/logout", (_req, res) => {
+  clearSessionCookie(res);
+  res.json({ ok: true });
+});
+
+app.get("/api/session", (req, res) => {
+  if (!readSession(req)) {
+    return res.status(401).json({ ok: false });
+  }
+  res.json({ ok: true });
+});
+
+app.use((req, res, next) => {
+  if (req.path === "/styles.css") return next();
+  const signedIn = Boolean(SESSION_SECRET) && Boolean(readSession(req));
+  if (req.path.startsWith("/api/")) return next();
+  if (req.path === "/login.html") {
+    if (signedIn) return res.redirect("/");
+    return next();
+  }
+  if (!signedIn && (req.path === "/" || req.path === "/index.html" || req.path === "/script.js")) {
+    if (req.path === "/script.js") return res.status(401).type("text/plain").send("Login required");
+    return res.redirect("/login.html");
+  }
+  next();
+});
 
 function loadLocalEnv() {
   const envPath = path.join(__dirname, ".env");
@@ -122,7 +258,7 @@ function redisNotConfigured(res) {
   });
 }
 
-app.get("/api/health", async (_req, res) => {
+app.get("/api/health", requireAuth, async (_req, res) => {
   try {
     if (!REDIS_URL) {
       return res.json({
@@ -145,7 +281,7 @@ app.get("/api/health", async (_req, res) => {
   }
 });
 
-app.get("/api/days", async (_req, res) => {
+app.get("/api/days", requireAuth, async (_req, res) => {
   try {
     const redis = await getRedis();
     if (!redis) return redisNotConfigured(res);
@@ -157,7 +293,7 @@ app.get("/api/days", async (_req, res) => {
   }
 });
 
-app.get("/api/days/:date", async (req, res) => {
+app.get("/api/days/:date", requireAuth, async (req, res) => {
   const { date } = req.params;
   if (!isValidDate(date)) {
     return res.status(400).json({ error: "Date must be YYYY-MM-DD" });
@@ -175,7 +311,7 @@ app.get("/api/days/:date", async (req, res) => {
   }
 });
 
-app.put("/api/days/:date", async (req, res) => {
+app.put("/api/days/:date", requireAuth, async (req, res) => {
   const { date } = req.params;
   if (!isValidDate(date)) {
     return res.status(400).json({ error: "Date must be YYYY-MM-DD" });
@@ -216,5 +352,8 @@ app.listen(PORT, () => {
   console.log(`Redis key namespace: ${KEY_NAMESPACE}`);
   if (!REDIS_URL) {
     console.warn("REDIS_URL is not set — save/load stays unavailable until it is configured.");
+  }
+  if (!AUTH_PASSWORD || !SESSION_SECRET) {
+    console.warn("AUTH_PASSWORD or SESSION_SECRET is missing — login will stay closed.");
   }
 });

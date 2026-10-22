@@ -19,6 +19,16 @@ const savedDaysEl = document.getElementById("saved-days");
 const storageStatusEl = document.getElementById("storage-status");
 const btnSave = document.getElementById("btn-save");
 const btnLoad = document.getElementById("btn-load");
+const btnLogout = document.getElementById("btn-logout");
+
+async function apiFetch(url, options) {
+  const res = await fetch(url, options);
+  if (res.status === 401) {
+    window.location.href = "/login.html";
+    throw new Error("Login required");
+  }
+  return res;
+}
 
 const inrFormatter = new Intl.NumberFormat("en-IN", {
   style: "currency",
@@ -107,7 +117,7 @@ function applySnapshot(agents) {
 
 async function refreshSavedDays(selectDate) {
   try {
-    const res = await fetch("/api/days");
+    const res = await apiFetch("/api/days");
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
       throw new Error(data.error || `Could not list days (${res.status})`);
@@ -143,7 +153,7 @@ async function saveCurrentDay() {
   btnSave.disabled = true;
   setStorageStatus("Saving…");
   try {
-    const res = await fetch(`/api/days/${date}`, {
+    const res = await apiFetch(`/api/days/${date}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(snapshot),
@@ -170,7 +180,7 @@ async function loadDay(date) {
   btnLoad.disabled = true;
   setStorageStatus(`Loading ${target}…`);
   try {
-    const res = await fetch(`/api/days/${target}`);
+    const res = await apiFetch(`/api/days/${target}`);
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       throw new Error(data.error || `Load failed (${res.status})`);
@@ -190,6 +200,10 @@ function initStorage() {
   recordDateEl.value = todayIsoDate();
   btnSave.addEventListener("click", saveCurrentDay);
   btnLoad.addEventListener("click", () => loadDay());
+  btnLogout.addEventListener("click", async () => {
+    await fetch("/api/logout", { method: "POST" });
+    window.location.href = "/login.html";
+  });
   savedDaysEl.addEventListener("change", () => {
     if (savedDaysEl.value) {
       recordDateEl.value = savedDaysEl.value;

@@ -13,3 +13,7 @@ services:
         sync: false
       - key: REDIS_KEY_PREFIX
         value: agent-incentive/
+      - key: AUTH_PASSWORD
+        sync: false
+      - key: SESSION_SECRET
+        sync: false

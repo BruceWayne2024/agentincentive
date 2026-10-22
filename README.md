@@ -7,6 +7,7 @@ One Render **web service** serves the page and the save/load API. Daily snapshot
 1. Deploy this repo as a Node web service. Build command: `npm install`. Start command: `npm start`.
 2. On that web service, set `REDIS_URL` to the **internal** connection string from the existing Key Value instance (same region). The browser never sees this URL.
 3. Leave `REDIS_KEY_PREFIX` as `agent-incentive/` (set in `render.yaml`, or add it yourself). That prefix is the folder this app is allowed to use.
+4. Set `AUTH_PASSWORD` and `SESSION_SECRET` on the web service. There is one shared password. After a correct login, the browser stays signed in for 30 days.
 
 ## Shared store isolation
 

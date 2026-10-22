@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#f0f4f8" />
+    <title>Sign in · Agent Incentive</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <section class="login-card">
+        <h1>Sign in</h1>
+        <p class="subtitle">One password opens the incentive calculator. This browser stays signed in for 30 days.</p>
+        <form id="login-form">
+          <label class="field">
+            <span class="field-label">Password</span>
+            <input type="password" id="password" name="password" autocomplete="current-password" required />
+          </label>
+          <button type="submit" class="btn btn-primary" id="btn-login">Sign in</button>
+          <p class="storage-status" id="login-status" role="status" aria-live="polite"></p>
+        </form>
+      </section>
+    </main>
+    <script>
+      const form = document.getElementById("login-form");
+      const statusEl = document.getElementById("login-status");
+      const button = document.getElementById("btn-login");
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        button.disabled = true;
+        statusEl.textContent = "Checking password…";
+        statusEl.classList.remove("is-error");
+        try {
+          const res = await fetch("/api/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ password: document.getElementById("password").value }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            statusEl.textContent = data.error || "Could not sign in";
+            statusEl.classList.add("is-error");
+            return;
+          }
+          window.location.href = "/";
+        } catch (err) {
+          statusEl.textContent = err.message;
+          statusEl.classList.add("is-error");
+        } finally {
+          button.disabled = false;
+        }
+      });
+    </script>
+  </body>
+</html>

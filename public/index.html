@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#f0f4f8" />
+    <title>Agent Incentive Calculator</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header>
+        <h1>Agent Incentive Calculator</h1>
+        <p class="subtitle">
+          Ratio is <strong>Card / Kouza</strong> rate per maan. Example 10/9 → Card
+          maan × ₹1,000 + Kouza maan × ₹900 (because 10×100 and 9×100).
+        </p>
+      </header>
+
+      <section class="storage-bar" aria-label="Save and load daily records">
+        <div class="storage-fields">
+          <label class="field">
+            <span class="field-label">Date</span>
+            <input type="date" id="record-date" />
+          </label>
+          <label class="field field-grow">
+            <span class="field-label">Saved days</span>
+            <select id="saved-days">
+              <option value="">— Load a saved day —</option>
+            </select>
+          </label>
+        </div>
+        <div class="storage-actions">
+          <button type="button" class="btn btn-primary" id="btn-save">Save this day</button>
+          <button type="button" class="btn btn-secondary" id="btn-load">Load selected day</button>
+        </div>
+        <p class="storage-status" id="storage-status" role="status" aria-live="polite"></p>
+      </section>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th class="col-agent">Agent</th>
+              <th class="col-ratio">Card / Kouza</th>
+              <th>Card Sale</th>
+              <th>Kouza Sale</th>
+              <th class="col-num">Total incentive (INR)</th>
+            </tr>
+          </thead>
+          <tbody id="agent-rows"></tbody>
+          <tfoot>
+            <tr class="totals-row">
+              <td class="totals-lead" colspan="4"><strong>Grand total</strong></td>
+              <td
+                class="col-num totals-sum"
+                data-label="Total incentive (INR)"
+                id="grand-total"
+              >
+                0
+              </td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </main>
+    <script src="script.js"></script>
+  </body>
+</html>

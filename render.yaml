@@ -1,0 +1,15 @@
+# Frontend and API are this one web service.
+# Point REDIS_URL at the existing Key Value store's internal URL
+# in the Render dashboard. This file does not create a new store.
+services:
+  - type: web
+    name: agent-incentive
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: REDIS_URL
+        sync: false
+      - key: REDIS_KEY_PREFIX
+        value: agent-incentive/

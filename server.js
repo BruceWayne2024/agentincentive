@@ -20,6 +20,7 @@ const COOKIE_NAME = "session";
 const KEY_NAMESPACE = normalizeNamespace(process.env.REDIS_KEY_PREFIX || "agent-incentive/");
 
 const DAY_INDEX_KEY = key("day-index");
+const AGENTS_KEY = key("agents");
 
 app.set("trust proxy", 1);
 app.use(express.json({ limit: "64kb" }));
@@ -211,6 +212,43 @@ function finiteNonNegative(value) {
   return Number.isFinite(n) && n >= 0 && n < 1e12 ? n : null;
 }
 
+function finiteRate(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0 || n > 1e7) return null;
+  return Math.round(n * 100) / 100;
+}
+
+function sanitizeAgentList(list) {
+  if (!Array.isArray(list) || list.length > 50) return null;
+  const clean = [];
+  const seen = new Set();
+  for (const agent of list) {
+    if (!agent || typeof agent !== "object") return null;
+    const name = String(agent.name || "").trim();
+    if (!/^[A-Za-z][A-Za-z0-9 .'-]{0,39}$/.test(name)) return null;
+    const keyName = name.toLowerCase();
+    if (seen.has(keyName)) return null;
+    seen.add(keyName);
+
+    const hasRates = agent.cardPerMaan != null || agent.kouzaPerMaan != null;
+    const hasFactors = agent.cardFactor != null || agent.kouzaFactor != null;
+    if (hasRates && !hasFactors) {
+      const cardPerMaan = finiteRate(agent.cardPerMaan);
+      const kouzaPerMaan = finiteRate(agent.kouzaPerMaan);
+      if (cardPerMaan == null || kouzaPerMaan == null) return null;
+      clean.push({ name, cardPerMaan, kouzaPerMaan });
+    } else if (hasFactors && !hasRates) {
+      const cardFactor = finiteRate(agent.cardFactor);
+      const kouzaFactor = finiteRate(agent.kouzaFactor);
+      if (cardFactor == null || kouzaFactor == null) return null;
+      clean.push({ name, cardFactor, kouzaFactor });
+    } else {
+      return null;
+    }
+  }
+  return clean;
+}
+
 function sanitizeAgents(agents) {
   const clean = {};
   for (const [name, value] of Object.entries(agents)) {
@@ -278,6 +316,35 @@ app.get("/api/health", requireAuth, async (_req, res) => {
       namespace: KEY_NAMESPACE,
       error: err.message,
     });
+  }
+});
+
+app.get("/api/agents", requireAuth, async (_req, res) => {
+  try {
+    const redis = await getRedis();
+    if (!redis) return res.json({ agents: null, persisted: false });
+    const raw = await redis.get(AGENTS_KEY);
+    if (!raw) return res.json({ agents: null, persisted: true });
+    const agents = sanitizeAgentList(JSON.parse(raw));
+    if (!agents) return res.status(500).json({ error: "Saved agent list is invalid" });
+    res.json({ agents, persisted: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put("/api/agents", requireAuth, async (req, res) => {
+  const agents = sanitizeAgentList(req.body && req.body.agents);
+  if (!agents) {
+    return res.status(400).json({ error: "Agent list is not valid" });
+  }
+  try {
+    const redis = await getRedis();
+    if (!redis) return redisNotConfigured(res);
+    await redis.set(AGENTS_KEY, JSON.stringify(agents));
+    res.json({ ok: true, agents });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 

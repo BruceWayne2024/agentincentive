@@ -20,8 +20,47 @@
             maan × ₹1,000 + Kouza maan × ₹900 (because 10×100 and 9×100).
           </p>
         </div>
-        <button type="button" class="btn btn-secondary" id="btn-logout">Log out</button>
+        <div class="header-actions">
+          <button
+            type="button"
+            class="btn btn-secondary"
+            id="btn-edit-agents"
+            aria-expanded="false"
+            aria-controls="agent-editor"
+          >
+            Edit agents list
+          </button>
+          <button type="button" class="btn btn-secondary" id="btn-logout">Log out</button>
+        </div>
       </header>
+
+      <section class="storage-bar agent-editor" id="agent-editor" hidden>
+        <div class="agent-editor-head">
+          <h2>Agents</h2>
+          <button type="button" class="btn btn-secondary" id="btn-close-editor">Done</button>
+        </div>
+        <ul id="agent-editor-list" class="agent-editor-list"></ul>
+        <form id="add-agent-form" class="storage-fields">
+          <label class="field">
+            <span class="field-label">Name</span>
+            <input id="new-agent-name" name="name" type="text" maxlength="40" required placeholder="Agent name" />
+          </label>
+          <label class="field">
+            <span class="field-label">Card ₹ / maan</span>
+            <input id="new-agent-card" name="card" type="number" min="0.01" step="any" inputmode="decimal" required placeholder="1000" />
+          </label>
+          <label class="field">
+            <span class="field-label">Kouza ₹ / maan</span>
+            <input id="new-agent-kouza" name="kouza" type="number" min="0.01" step="any" inputmode="decimal" required placeholder="900" />
+          </label>
+          <div class="field field-action">
+            <span class="field-label">Add</span>
+            <button type="submit" class="btn btn-primary">Add agent</button>
+          </div>
+        </form>
+        <p class="editor-hint">Enter rupees per maan. A 10/9 ratio is 1000 for card and 900 for kouza.</p>
+        <p class="storage-status" id="agent-editor-status" role="status" aria-live="polite"></p>
+      </section>
 
       <section class="storage-bar" aria-label="Save and load daily records">
         <div class="storage-fields">

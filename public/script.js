@@ -1,4 +1,4 @@
-const AGENTS = [
+const DEFAULT_AGENTS = [
   { name: "Peter", cardFactor: 13, kouzaFactor: 10 },
   { name: "Sandeep", cardFactor: 12, kouzaFactor: 10 },
   { name: "Nvn", cardFactor: 12, kouzaFactor: 10 },
@@ -11,6 +11,20 @@ const AGENTS = [
   { name: "Shweta", cardFactor: 10, kouzaFactor: 10 },
   { name: "Pankaj", cardPerMaan: 100, kouzaPerMaan: 150 },
 ];
+
+const AGENT_LIST_KEY = "agent-incentive-agents";
+let agents = DEFAULT_AGENTS.map((agent) => ({ ...agent }));
+let agentListRevision = 0;
+
+const agentEditor = document.getElementById("agent-editor");
+const agentEditorList = document.getElementById("agent-editor-list");
+const agentEditorStatus = document.getElementById("agent-editor-status");
+const addAgentForm = document.getElementById("add-agent-form");
+const newAgentName = document.getElementById("new-agent-name");
+const newAgentCard = document.getElementById("new-agent-card");
+const newAgentKouza = document.getElementById("new-agent-kouza");
+const btnEditAgents = document.getElementById("btn-edit-agents");
+const btnCloseEditor = document.getElementById("btn-close-editor");
 
 const tbody = document.getElementById("agent-rows");
 const grandTotalEl = document.getElementById("grand-total");
@@ -64,6 +78,28 @@ function formatRatioLabel(agent) {
 
 function formatRateHint(rates) {
   return `Card ₹${rates.cardPerMaan.toLocaleString("en-IN")}/maan · Kouza ₹${rates.kouzaPerMaan.toLocaleString("en-IN")}/maan`;
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function setEditorStatus(message, isError = false) {
+  agentEditorStatus.textContent = message;
+  agentEditorStatus.classList.toggle("is-error", isError);
+}
+
+function validAgentName(name) {
+  return /^[A-Za-z][A-Za-z0-9 .'-]{0,39}$/.test(name);
+}
+
+function validRate(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 && n <= 1e7 ? Math.round(n * 100) / 100 : null;
 }
 
 function todayIsoDate() {
@@ -232,21 +268,171 @@ function recalculateAll() {
   grandTotalEl.textContent = formatInr(grandTotal);
 }
 
-function buildRows() {
-  AGENTS.forEach((agent) => {
+function readEnteredValues() {
+  const values = {};
+  tbody.querySelectorAll("tr").forEach((row) => {
+    values[row.dataset.agentName] = {
+      card: row.querySelector(".input-card").value,
+      kouza: row.querySelector(".input-kouza").value,
+    };
+  });
+  return values;
+}
+
+function renderEditor() {
+  agentEditorList.replaceChildren();
+  if (agents.length === 0) {
+    const empty = document.createElement("li");
+    empty.className = "agent-editor-empty";
+    empty.textContent = "No agents yet. Add one below.";
+    agentEditorList.appendChild(empty);
+    return;
+  }
+
+  agents.forEach((agent, index) => {
+    const item = document.createElement("li");
+    const info = document.createElement("div");
+    const name = document.createElement("strong");
+    name.textContent = agent.name;
+    const hint = document.createElement("span");
+    hint.textContent = formatRateHint(getRates(agent));
+    info.append(name, hint);
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "btn btn-secondary";
+    remove.textContent = "Remove";
+    remove.addEventListener("click", () => removeAgent(index));
+
+    item.append(info, remove);
+    agentEditorList.appendChild(item);
+  });
+}
+
+function setEditorOpen(open) {
+  agentEditor.hidden = !open;
+  btnEditAgents.setAttribute("aria-expanded", String(open));
+  if (open) newAgentName.focus();
+}
+
+async function persistAgents() {
+  agentListRevision += 1;
+  localStorage.setItem(AGENT_LIST_KEY, JSON.stringify(agents));
+  try {
+    const res = await apiFetch("/api/agents", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agents }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Could not save the agent list (${res.status})`);
+    setEditorStatus("Agent list saved.");
+  } catch (err) {
+    if (err.message === "Login required") return;
+    setEditorStatus(
+      err.message === "Redis is not configured. Set REDIS_URL on the Render web service."
+        ? "List updated in this browser. Redis is not configured, so it will not sync to other devices."
+        : err.message,
+      true
+    );
+  }
+}
+
+async function addAgent(event) {
+  event.preventDefault();
+  const name = newAgentName.value.trim();
+  const cardPerMaan = validRate(newAgentCard.value);
+  const kouzaPerMaan = validRate(newAgentKouza.value);
+
+  if (!validAgentName(name)) {
+    setEditorStatus("Name must start with a letter and stay under 40 characters.", true);
+    return;
+  }
+  if (agents.some((agent) => agent.name.toLowerCase() === name.toLowerCase())) {
+    setEditorStatus(`${name} is already on the list.`, true);
+    return;
+  }
+  if (cardPerMaan == null || kouzaPerMaan == null) {
+    setEditorStatus("Enter a card rate and a kouza rate in rupees per maan.", true);
+    return;
+  }
+
+  agents.push({ name, cardPerMaan, kouzaPerMaan });
+  addAgentForm.reset();
+  renderTable();
+  renderEditor();
+  await persistAgents();
+}
+
+async function removeAgent(index) {
+  const agent = agents[index];
+  if (!agent) return;
+  if (!window.confirm(`Remove ${agent.name} from the list?`)) return;
+  agents.splice(index, 1);
+  renderTable();
+  renderEditor();
+  await persistAgents();
+}
+
+async function loadAgentList() {
+  const revision = agentListRevision;
+  try {
+    const raw = localStorage.getItem(AGENT_LIST_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        agents = parsed;
+        renderTable();
+        renderEditor();
+      }
+    }
+  } catch {
+    localStorage.removeItem(AGENT_LIST_KEY);
+  }
+
+  try {
+    const res = await apiFetch("/api/agents");
+    if (revision !== agentListRevision) return;
+    if (!res.ok) return;
+    const data = await res.json();
+    if (revision !== agentListRevision || !Array.isArray(data.agents)) return;
+    agents = data.agents;
+    localStorage.setItem(AGENT_LIST_KEY, JSON.stringify(agents));
+    renderTable();
+    renderEditor();
+  } catch (err) {
+    if (err.message !== "Login required") {
+      setEditorStatus(err.message, true);
+    }
+  }
+}
+
+function initAgentEditor() {
+  btnEditAgents.addEventListener("click", () => setEditorOpen(agentEditor.hidden));
+  btnCloseEditor.addEventListener("click", () => setEditorOpen(false));
+  addAgentForm.addEventListener("submit", addAgent);
+  renderEditor();
+}
+
+function renderTable() {
+  const entered = readEnteredValues();
+  tbody.replaceChildren();
+
+  agents.forEach((agent) => {
     const rates = getRates(agent);
     const tr = document.createElement("tr");
     tr.dataset.agentName = agent.name;
     tr.dataset.cardPerMaan = rates.cardPerMaan;
     tr.dataset.kouzaPerMaan = rates.kouzaPerMaan;
 
-    const ratio = formatRatioLabel(agent);
-    const rateHint = formatRateHint(rates);
+    const ratio = escapeHtml(formatRatioLabel(agent));
+    const rateHint = escapeHtml(formatRateHint(rates));
+    const safeName = escapeHtml(agent.name);
 
     tr.innerHTML = `
       <td class="col-agent">
         <div class="agent-head">
-          <span class="agent-name">${agent.name}</span>
+          <span class="agent-name">${safeName}</span>
           <span class="ratio-badge ratio-mobile">${ratio}</span>
         </div>
         <span class="rate-hint-mobile">${rateHint}</span>
@@ -263,7 +449,7 @@ function buildRows() {
           step="any"
           inputmode="decimal"
           placeholder="Enter the value in maan"
-          aria-label="${agent.name} card sale in maan, ${rates.cardPerMaan} rupees per maan"
+          aria-label="${safeName} card sale in maan, ${rates.cardPerMaan} rupees per maan"
         />
       </td>
       <td class="cell-input" data-label="Kouza sale">
@@ -274,14 +460,21 @@ function buildRows() {
           step="any"
           inputmode="decimal"
           placeholder="Enter the value in maan"
-          aria-label="${agent.name} kouza sale in maan, ${rates.kouzaPerMaan} rupees per maan"
+          aria-label="${safeName} kouza sale in maan, ${rates.kouzaPerMaan} rupees per maan"
         />
       </td>
       <td class="col-num cell-total cell-result" data-label="Total incentive (INR)">₹0</td>
     `;
 
-    tr.querySelector(".input-card").addEventListener("input", recalculateAll);
-    tr.querySelector(".input-kouza").addEventListener("input", recalculateAll);
+    const cardInput = tr.querySelector(".input-card");
+    const kouzaInput = tr.querySelector(".input-kouza");
+    const previous = entered[agent.name];
+    if (previous) {
+      cardInput.value = previous.card;
+      kouzaInput.value = previous.kouza;
+    }
+    cardInput.addEventListener("input", recalculateAll);
+    kouzaInput.addEventListener("input", recalculateAll);
 
     tbody.appendChild(tr);
   });
@@ -289,5 +482,7 @@ function buildRows() {
   recalculateAll();
 }
 
-buildRows();
+renderTable();
 initStorage();
+initAgentEditor();
+loadAgentList();
